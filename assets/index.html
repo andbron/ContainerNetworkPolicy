@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="us-en">
+  <head>
+      <title>Visual Star</title>
+
+      <meta charset="utf-8" />
+      <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+      <meta name="description" content="" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+      <script src="/assets/js/jquery.min.js"> </script>
+      <script src="/assets/js/arbor.js"> </script>
+      <script src="/assets/js/arbor-tween.js"> </script>
+
+      <script>
+        (function ($) {
+
+          // Mesosphere colors
+          var palette = {
+            neutral: {
+              light1: "#2E3343",
+              light15: "#E0D5D5",
+              light19: "#EFEFEF"
+            },
+            bright: {
+              powder: "#24CBFF",
+              mercury: "#EE468A",
+              royal: "#2568F5",
+              heliotrope: "#7F32DF",
+              seafoam: "#27C268",
+              lemon: "#F4B826",
+              mars: "#F72C4F",
+              purple: "#35066B",
+              beige: "#6D685B"
+            }
+          };
+
+          function createRenderer(canvas, animationLoopLength) {
+            var canvas = $(canvas).get(0);
+            var ctx = canvas.getContext("2d");
+            var particleSystem;
+
+            var drawUnreachableEdges = true;
+            var drawMarkers = true;
+
+            var animationFrame = 0;
+
+            return {
+              init: function (system) {
+                particleSystem = system;
+                particleSystem.screenSize(canvas.width, canvas.height);
+                particleSystem.screenPadding(35);
+              },
+
+              toggleUnreachable: function() {
+                drawUnreachableEdges = !drawUnreachableEdges;
+              },
+
+              toggleMarkers: function() {
+                drawMarkers = !drawMarkers;
+              },
+
+              redraw: function() {
+                animationFrame = (animationFrame + 1) % animationLoopLength;
+                var animationProgress = animationFrame / animationLoopLength;
+                ctx.fillStyle = palette.neutral.light1;
+                ctx.fillRect(0,0, canvas.width, canvas.height);
+
+                // Render the edges
+                particleSystem.eachEdge(function (edge, p1, p2) {
+                  // edge: {source:Node, target:Node, length:#, data:{}}
+                  // p1:  {x:#, y:#}  source position in screen coords
+                  // p2:  {x:#, y:#}  target position in screen coords
+
+                  if (!edge.data.reachable && !drawUnreachableEdges) {
+                    return;
+                  }
+
+                  // draw a curve from p1 to p2
+                  var strokeColor = hexToRgb(edge.data.color);
+                  var strokeAlpha = 0.95;
+                  if (edge.data.reachable) {
+                    ctx.lineWidth = 30;
+                  }
+                  else {
+                    strokeAlpha = 0.1;
+                  }
+                  ctx.strokeStyle = "rgba(" + strokeColor["r"] + "," +
+                    strokeColor["g"] + "," +
+                    strokeColor["b"] + "," +
+                    strokeAlpha + ")";
+                  ctx.beginPath();
+                  ctx.moveTo(p1.x, p1.y);
+                  var ctl = computeQuadraticControlPoint(p1, p2);
+                  ctx.quadraticCurveTo(ctl.x, ctl.y, p2.x, p2.y);
+                  ctx.stroke();
+
+                  if (edge.data.reachable && drawMarkers) {
+                    drawLightBall(
+                      ctx,
+                      pointOnQuadraticCurve(p1, p2, ctl, animationProgress));
+                  }
+                });
+
+                // Render the nodes
+                particleSystem.eachNode(function (node, point) {
+                  // node: {mass:#, p:{x,y}, name:"", data:{}}
+                  // point:   {x:#, y:#}  node position in screen coords
+
+                  // draw a filled circle centered at pt
+                  var radius = 35;
+                  var ccw = true;
+                  ctx.fillStyle = node.data.color;
+                  ctx.strokeStyle = palette.neutral.light1;
+                  ctx.beginPath();
+                  ctx.arc(point.x, point.y, radius, 0, Math.PI*2, ccw);
+                  ctx.closePath();
+                  ctx.lineWidth = 10;
+                  ctx.stroke();
+                  ctx.fill();
+
+                  // render the label
+                  ctx.font = "40px Sans-Serif";
+                  ctx.fillStyle = palette.neutral.light15;
+                  ctx.fillText(node.name, point.x - 13, point.y + 13);
+                });
+              }
+            };
+          }
+
+          function computeQuadraticControlPoint(p1, p2) {
+            var vector = p2.subtract(p1);
+            var midpoint = p1.add(vector.divide(2));
+            var theta = Math.atan2(vector.y, vector.x);
+            var thetaNormal = theta + Math.PI / 2;
+            var magnitude = vector.magnitude() * 0.25;
+            var cx = midpoint.x + Math.cos(thetaNormal) * magnitude;
+            var cy = midpoint.y + Math.sin(thetaNormal) * magnitude;
+            return arbor.Point(cx, cy);
+          }
+
+          function pointOnQuadraticCurve(p1, p2, control, t) {
+            // Quadratic Bezier Formula:
+            //   B(t) = (1 - t)^2 * p1 + 2(1 - t) * t * control + t^2 * p2
+            //   for t in [0, 1].
+            var term1 = p1.multiply(Math.pow(1 - t, 2));
+            var term2 = control.multiply(2 * (1 - t) * t);
+            var term3 = p2.multiply(Math.pow(t, 2));
+            return term1.add(term2.add(term3));
+          }
+
+          function drawLightBall(ctx, point) {
+            var radius = 15;
+            var ccw = true;
+            var gradient = ctx.createRadialGradient(
+              point.x, point.y, radius, point.x, point.y, 0);
+            gradient.addColorStop(0, "rgba(255, 255, 255, 0.0)");
+            gradient.addColorStop(1, "rgba(255, 255, 255, 0.6)");
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, radius, 0, Math.PI*2, ccw);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          function hexToRgb(hex) {
+            // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
+            var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+            hex = hex.replace(
+              shorthandRegex,
+              function(m, r, g, b) {
+                return r + r + g + g + b + b;
+              });
+
+            var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+              r: parseInt(result[1], 16),
+              g: parseInt(result[2], 16),
+              b: parseInt(result[3], 16)
+            } : null;
+          }
+
+          function createGraph(nodes) {
+
+            var repulsion = 1000 // the force repelling nodes from each other
+            var stiffness = 60   // the rigidity of the edges
+            var friction = 0.6   // the amount of damping in the system
+            var gravity = false  // force attracting nodes to the origin
+            var fps = 70         // frames per second
+            var dt = 0.02        // timestep for stepping the simulation
+            var precision = 0.7  // accuracy vs. speed in force calculations
+                                 // - zero is fast but jittery
+                                 // - one is smooth but cpu-intensive
+
+            var g = arbor.ParticleSystem(
+              repulsion,
+              stiffness,
+              friction,
+              gravity,
+              fps,
+              dt,
+              precision
+            );
+
+            nodes.forEach(function (n) {
+              g.addNode(n.id, n);
+
+              nodes.some(function (m) {
+                if (n.id === m.id)
+                  return false; // short-circuit to next iteration
+
+                function findTarget(node1, node2) {
+                  var target;
+
+                  if (!node1.response || !node2.response)
+                    return null;
+
+                  var json = node1.response.json;
+
+                  if (!json.status || !json.status.targets)
+                    return null;
+
+                  json.status.targets.forEach(function (t) {
+                    if (t.url === node2.response.url) {
+                      target = t;
+                    }
+                  });
+
+                  return target;
+                }
+
+                var target = findTarget(n, m);
+                if (!target)
+                  return false;
+
+                console.log("Adding edge from [%s] to [%s]", n.id, m.id);
+
+                var edgeData = {
+                  color: n.color,
+                  reachable: target.reachable
+                };
+                g.addEdge(n.id, m.id, edgeData);
+              });
+            });
+
+            return g;
+          }
+
+          function extractNodes(responses) {
+            var nodes = [];
+
+            var colors = Object.keys(palette.bright)
+              .map(function (k) { return palette.bright[k] })
+              .reverse();
+
+            for (var responseId in responses) {
+              var node = {
+                id: responseId,
+                color: colors.pop(),
+                response: responses[responseId]
+              };
+              if (node.response)
+                nodes.push(node);
+            }
+            return nodes;
+          }
+
+          function resizeCanvas(canvas) {
+            var $canvas = $(canvas);
+            var $body = $('body');
+            var newWidth = $body.width();
+            var newHeight = document.documentElement.clientHeight * 0.9;
+            $canvas.attr("width", newWidth);
+            $canvas.attr("height", newHeight);
+          }
+
+          function getQueryParameterByName(name) {
+            var match = RegExp('[?&]' + name + '=([^&]*)')
+              .exec(window.location.search);
+
+            return match && decodeURIComponent(match[1].replace(/\+/g, ' '));
+          }
+
+
+          $(document).ready(function () {
+
+            var useExampleData = getQueryParameterByName("example") || false;
+            console.log("Use example data? [%s]", useExampleData);
+
+            var resourceUrl;
+            if (useExampleData) resourceUrl = "/responses/example";
+            else resourceUrl = "/responses";
+
+            console.log("Fetching data from [%s]", resourceUrl);
+            $.get(resourceUrl, function (data) {
+              console.log("data", data);
+
+              var nodes = extractNodes(data.responses);
+
+              console.log("Created nodes");
+              nodes.forEach(function (node) {
+                console.log(node);
+              });
+
+              var g = createGraph(nodes);
+              var canvasSelector = "#graph";
+              var animationLoopLength = 140; // frames
+              g.renderer = createRenderer(canvasSelector, animationLoopLength);
+
+              // resize the canvas initially and when the window is resized.
+              resizeCanvas(canvasSelector);
+              $(window).resize(function() {
+                resizeCanvas(canvasSelector)
+              });
+
+              $("#toggle-unreachable").click(
+                function(event) {
+                  g.renderer.toggleUnreachable();
+                  this.blur();
+                }
+              );
+
+              $("#toggle-markers").click(
+                function(event) {
+                  g.renderer.toggleMarkers();
+                  this.blur();
+                }
+              );
+
+            });
+          });
+
+        })(this.jQuery);
+
+      </script>
+
+      <style type="text/css">
+        h1 {
+          font-family: sans-serif;
+          font-style: italic;
+          color: #EFEFEF;
+        }
+        body {
+          background-color: #2E3343;
+        }
+        #controls {
+          float: right;
+        }
+        #controls button {
+          width: 150px;
+          height: 25px;
+          color: #EFEFEF;
+          background: #000;
+          border: 1px solid #333;
+        }
+      </style>
+
+  </head>
+
+  <body>
+    <div id="controls">
+      <button id="toggle-unreachable">Toggle Unreachable</button>
+      <button id="toggle-markers">Toggle Markers</button>
+    </div>
+    <canvas id="graph" width="500" height="700" />
+  </body>
+
+</html>
